@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # <swiftbar.title>Claude Usage</swiftbar.title>
-# <swiftbar.version>1.0.0</swiftbar.version>
+# <swiftbar.version>1.1.0</swiftbar.version>
 # <swiftbar.author>varunragunathan</swiftbar.author>
 # <swiftbar.desc>Claude Pro 5hr window and weekly usage percentages</swiftbar.desc>
 # <swiftbar.hideAbout>true</swiftbar.hideAbout>
@@ -13,11 +13,18 @@ import subprocess
 import urllib.request
 import urllib.error
 import os
+import time
 from datetime import datetime, timezone
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-CONFIG_PATH = os.path.expanduser("~/.config/claude-usage/config.json")
+CONFIG_DIR  = os.path.expanduser("~/.config/claude-usage")
+CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
+CACHE_PATH  = os.path.join(CONFIG_DIR, "cache.json")
+
+# Minimum seconds between real API calls regardless of SwiftBar's refresh rate.
+# The usage endpoint rate-limits aggressively; 60s is a safe floor.
+MIN_FETCH_INTERVAL = 60
 
 DEFAULTS = {
     "warn_threshold": 75,     # % → orange
@@ -33,6 +40,22 @@ def load_config():
             pass
     return DEFAULTS
 
+# ── Cache ─────────────────────────────────────────────────────────────────────
+
+def load_cache():
+    """Return (data, fetched_at_epoch) or (None, 0)."""
+    try:
+        with open(CACHE_PATH) as f:
+            c = json.load(f)
+            return c.get("data"), c.get("fetched_at", 0)
+    except Exception:
+        return None, 0
+
+def save_cache(data):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(CACHE_PATH, "w") as f:
+        json.dump({"fetched_at": time.time(), "data": data}, f)
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def get_access_token():
@@ -44,14 +67,11 @@ def get_access_token():
     if result.returncode != 0:
         return None, "Claude Code credentials not found in Keychain"
     try:
-        raw = result.stdout.strip()
-        creds = json.loads(raw)
-        # Handle nested: {"claudeAiOauth": {"accessToken": "..."}}
+        creds = json.loads(result.stdout.strip())
         if "claudeAiOauth" in creds:
             token = creds["claudeAiOauth"].get("accessToken")
             if token:
                 return token, None
-        # Handle flat dot-notation key
         token = creds.get("claudeAiOauth.accessToken")
         if token:
             return token, None
@@ -72,15 +92,15 @@ def fetch_usage(token):
     }
     req = urllib.request.Request(USAGE_URL, headers=headers)
     with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode()), None
+        return json.loads(resp.read().decode())
 
 # ── Formatting ────────────────────────────────────────────────────────────────
 
-GREEN    = "#34C759"
-ORANGE   = "#FF9500"
-RED      = "#FF3B30"
-GRAY     = "#8E8E93"
-WHITE    = "#FFFFFF"
+GREEN  = "#34C759"
+ORANGE = "#FF9500"
+RED    = "#FF3B30"
+GRAY   = "#8E8E93"
+WHITE  = "#FFFFFF"
 
 def color_for(pct, cfg):
     if pct >= cfg["critical_threshold"]: return RED
@@ -101,11 +121,15 @@ def time_until(iso_str):
             return "resetting soon"
         h, rem = divmod(secs, 3600)
         m = rem // 60
-        if h > 0:
-            return f"{h}h {m}m"
-        return f"{m}m"
+        return f"{h}h {m}m" if h > 0 else f"{m}m"
     except Exception:
         return None
+
+def age_str(fetched_at):
+    secs = int(time.time() - fetched_at)
+    if secs < 60:   return f"{secs}s ago"
+    if secs < 3600: return f"{secs // 60}m ago"
+    return f"{secs // 3600}h ago"
 
 # ── SwiftBar output ───────────────────────────────────────────────────────────
 
@@ -116,77 +140,99 @@ def print_error(msg):
     print("---")
     print("Refresh | refresh=true")
 
-def main():
-    cfg = load_config()
-
-    token, err = get_access_token()
-    if err:
-        print_error(err)
-        return
-
-    try:
-        data, err = fetch_usage(token)
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            print_error("Token expired — restart Claude Code to refresh")
-        else:
-            print_error(f"API error {e.code}")
-        return
-    except Exception as e:
-        print_error(f"Network error: {e}")
-        return
-
-    # Parse
+def render(data, cfg, stale=False, fetched_at=0):
     win  = data.get("five_hour") or {}
     week = data.get("seven_day") or {}
     opus = data.get("seven_day_opus") or {}
 
-    win_pct   = float(win.get("utilization", 0))
-    week_pct  = float(week.get("utilization", 0))
-    opus_pct  = float(opus.get("utilization", 0))
+    win_pct  = float(win.get("utilization", 0))
+    week_pct = float(week.get("utilization", 0))
+    opus_pct = float(opus.get("utilization", 0))
     win_reset  = win.get("resets_at")
     week_reset = week.get("resets_at")
 
     win_color  = color_for(win_pct, cfg)
     week_color = color_for(week_pct, cfg)
-
-    # ── Menu bar title (one line) ──────────────────────────────────────────
-    # Show the worse of the two percentages as the title color
     title_color = win_color if win_pct >= week_pct else week_color
-    print(f"◈  {win_pct:.0f}%  ·  W {week_pct:.0f}% | color={title_color}")
 
+    stale_mark = " ·" if stale else ""
+    print(f"◈  {win_pct:.0f}%  ·  W {week_pct:.0f}%{stale_mark} | color={title_color}")
     print("---")
 
-    # ── 5-Hour window ──────────────────────────────────────────────────────
+    # 5-Hour window
     print(f"5-Hour Window | color={WHITE} font=.AppleSystemUIFontBold size=12")
     print(f"{bar(win_pct)}  {win_pct:.1f}% | color={win_color} font=Menlo size=13")
-    reset_str = time_until(win_reset)
-    if reset_str:
-        print(f"Resets in {reset_str} | color={GRAY} size=11")
+    t = time_until(win_reset)
+    if t:
+        print(f"Resets in {t} | color={GRAY} size=11")
 
     print("---")
 
-    # ── Weekly ─────────────────────────────────────────────────────────────
+    # Weekly
     print(f"Weekly | color={WHITE} font=.AppleSystemUIFontBold size=12")
     print(f"{bar(week_pct)}  {week_pct:.1f}% | color={week_color} font=Menlo size=13")
-    reset_str = time_until(week_reset)
-    if reset_str:
-        print(f"Resets in {reset_str} | color={GRAY} size=11")
+    t = time_until(week_reset)
+    if t:
+        print(f"Resets in {t} | color={GRAY} size=11")
 
-    # ── Opus (only shown if > 0) ───────────────────────────────────────────
+    # Opus (only if > 0)
     if opus_pct > 0:
         opus_color = color_for(opus_pct, cfg)
         print("---")
         print(f"Weekly Opus | color={WHITE} font=.AppleSystemUIFontBold size=12")
         print(f"{bar(opus_pct)}  {opus_pct:.1f}% | color={opus_color} font=Menlo size=13")
 
-    # ── Footer ─────────────────────────────────────────────────────────────
+    # Footer
     print("---")
-    now = datetime.now().strftime("%-I:%M %p")
-    print(f"Updated {now} | color={GRAY} size=10")
+    if stale and fetched_at:
+        print(f"Data from {age_str(fetched_at)} (rate limited) | color={GRAY} size=10")
+    else:
+        now = datetime.now().strftime("%-I:%M %p")
+        print(f"Updated {now} | color={GRAY} size=10")
     print("Refresh | refresh=true")
     print("---")
     print(f"Open Config | bash=/usr/bin/open param1={CONFIG_PATH} terminal=false")
+
+def main():
+    cfg = load_config()
+    cached_data, fetched_at = load_cache()
+
+    # Respect the minimum fetch interval — serve cache if too soon
+    age = time.time() - fetched_at
+    if cached_data and age < MIN_FETCH_INTERVAL:
+        render(cached_data, cfg, stale=False, fetched_at=fetched_at)
+        return
+
+    token, err = get_access_token()
+    if err:
+        if cached_data:
+            render(cached_data, cfg, stale=True, fetched_at=fetched_at)
+        else:
+            print_error(err)
+        return
+
+    try:
+        data = fetch_usage(token)
+        save_cache(data)
+        render(data, cfg)
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            if cached_data:
+                render(cached_data, cfg, stale=True, fetched_at=fetched_at)
+            else:
+                print_error("Rate limited — will retry shortly")
+        elif e.code == 401:
+            print_error("Token expired — restart Claude Code to refresh")
+        else:
+            if cached_data:
+                render(cached_data, cfg, stale=True, fetched_at=fetched_at)
+            else:
+                print_error(f"API error {e.code}")
+    except Exception as e:
+        if cached_data:
+            render(cached_data, cfg, stale=True, fetched_at=fetched_at)
+        else:
+            print_error(f"Network error: {e}")
 
 if __name__ == "__main__":
     main()
