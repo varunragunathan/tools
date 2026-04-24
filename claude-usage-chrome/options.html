@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Claude Usage — Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <h1>◈ Claude Usage</h1>
+
+    <section>
+      <h2>Thresholds</h2>
+      <div class="field">
+        <label for="warn">Warning <span class="badge orange">orange</span></label>
+        <input type="range" id="warn" min="10" max="95" step="5" value="75">
+        <span class="range-val" id="warn-val">75%</span>
+      </div>
+      <div class="field">
+        <label for="critical">Critical <span class="badge red">red</span></label>
+        <input type="range" id="critical" min="10" max="100" step="5" value="90">
+        <span class="range-val" id="critical-val">90%</span>
+      </div>
+    </section>
+
+    <p class="note">
+      Uses your active <strong>claude.ai</strong> browser session — no token needed.
+      If the badge shows <strong>–</strong>, log in to claude.ai and refresh.
+    </p>
+
+    <div class="actions">
+      <button id="save-btn">Save</button>
+      <span id="status"></span>
+    </div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -10,6 +10,7 @@
 
 import json
 import subprocess
+import sys
 import urllib.request
 import urllib.error
 import os
@@ -27,8 +28,9 @@ CACHE_PATH  = os.path.join(CONFIG_DIR, "cache.json")
 MIN_FETCH_INTERVAL = 60
 
 DEFAULTS = {
-    "warn_threshold": 75,     # % → orange
-    "critical_threshold": 90, # % → red
+    "warn_threshold": 75,          # % → orange
+    "critical_threshold": 90,      # % → red
+    "show_time_in_preview": False, # show window reset time instead of weekly % in title
 }
 
 def load_config():
@@ -156,7 +158,11 @@ def render(data, cfg, stale=False, fetched_at=0):
     title_color = win_color if win_pct >= week_pct else week_color
 
     stale_mark = " ·" if stale else ""
-    print(f"◈  {win_pct:.0f}%  ·  W {week_pct:.0f}%{stale_mark} | color={title_color}")
+    if cfg.get("show_time_in_preview") and (t := time_until(win_reset)):
+        preview_right = t
+    else:
+        preview_right = f"W {week_pct:.0f}%"
+    print(f"◈  {win_pct:.0f}%  ·  {preview_right}{stale_mark} | color={title_color}")
     print("---")
 
     # 5-Hour window
@@ -191,9 +197,23 @@ def render(data, cfg, stale=False, fetched_at=0):
         print(f"Updated {now} | color={GRAY} size=10")
     print("Refresh | refresh=true")
     print("---")
+    script = os.path.realpath(__file__)
+    check = "✓ " if cfg.get("show_time_in_preview") else ""
+    print(f"{check}Show Time in Title | bash=python3 param1={script} param2=--toggle-time terminal=false refresh=true")
     print(f"Open Config | bash=/usr/bin/open param1={CONFIG_PATH} terminal=false")
 
+def toggle_time_in_preview():
+    cfg = load_config()
+    cfg["show_time_in_preview"] = not cfg.get("show_time_in_preview", False)
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(cfg, f, indent=2)
+
 def main():
+    if "--toggle-time" in sys.argv:
+        toggle_time_in_preview()
+        return
+
     cfg = load_config()
     cached_data, fetched_at = load_cache()
 
