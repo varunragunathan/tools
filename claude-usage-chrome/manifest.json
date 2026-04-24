@@ -3,7 +3,7 @@
   "name": "Claude Usage",
   "version": "1.0.0",
   "description": "Monitor Claude Pro usage (5-hour window and weekly) from your toolbar",
-  "permissions": ["storage", "alarms"],
+  "permissions": ["storage", "alarms", "scripting", "tabs"],
   "host_permissions": ["https://claude.ai/*"],
   "action": {
     "default_popup": "popup.html",

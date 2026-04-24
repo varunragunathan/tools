@@ -42,10 +42,20 @@ async function render() {
   const content   = document.getElementById("content");
   const updatedAt = document.getElementById("updated-at");
 
-  const stored = await chrome.storage.local.get(["config", "cache", "authError"]);
+  const stored = await chrome.storage.local.get(["config", "cache", "authError", "noTab"]);
   const cfg    = { warn_threshold: 75, critical_threshold: 90, ...stored.config };
 
-  if (stored.authError) {
+  if (stored.noTab && !stored.cache?.data) {
+    content.innerHTML = `
+      <div class="no-token">
+        <strong>No claude.ai tab open</strong>
+        Open claude.ai in a tab, then click Refresh.
+      </div>`;
+    updatedAt.textContent = "";
+    return;
+  }
+
+  if (stored.authError && !stored.cache?.data) {
     content.innerHTML = `
       <div class="no-token">
         <strong>Not logged in</strong>

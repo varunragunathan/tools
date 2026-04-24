@@ -1,6 +1,4 @@
-const BOOTSTRAP_URL = "https://claude.ai/api/bootstrap";
-const USAGE_URL     = (orgId) => `https://claude.ai/api/organizations/${orgId}/usage`;
-const MIN_FETCH_MS  = 60_000;
+const MIN_FETCH_MS = 60_000;
 
 const COLOR = {
   green:  "#34C759",
@@ -16,7 +14,6 @@ function thresholdColor(pct, cfg) {
 }
 
 // ── Dynamic icon ──────────────────────────────────────────────────────────────
-// Two stacked bars drawn into the toolbar icon — visible without opening popup.
 
 function drawBars(winPct, weekPct, winColor, weekColor) {
   const size   = 32;
@@ -38,7 +35,7 @@ function drawBars(winPct, weekPct, winColor, weekColor) {
     ctx.fillRect(pad, y, fill, barH);
   }
 
-  bar(4,              winPct,  winColor);
+  bar(4,               winPct,  winColor);
   bar(size - barH - 4, weekPct, weekColor);
 
   return ctx.getImageData(0, 0, size, size);
@@ -58,43 +55,40 @@ function drawError() {
   return ctx.getImageData(0, 0, size, size);
 }
 
-// ── API ───────────────────────────────────────────────────────────────────────
+// ── Fetch via tab ─────────────────────────────────────────────────────────────
+// Runs the API calls inside an existing claude.ai tab so the session cookies
+// are included automatically — service workers can't send them directly.
 
-async function getOrgId() {
-  const stored = await chrome.storage.local.get("orgId");
-  if (stored.orgId) return stored.orgId;
-
-  const resp = await fetch(BOOTSTRAP_URL, {
-    credentials: "include",
-    headers: { Accept: "application/json" },
-  });
-  if (!resp.ok) {
-    const err = new Error(`bootstrap HTTP ${resp.status}`);
-    err.status = resp.status;
+async function fetchViaTab(cachedOrgId) {
+  const tabs = await chrome.tabs.query({ url: "https://claude.ai/*", status: "complete" });
+  if (!tabs.length) {
+    const err = new Error("No claude.ai tab open");
+    err.code = "NO_TAB";
     throw err;
   }
-  const data  = await resp.json();
-  const orgId = data?.account?.memberships?.[0]?.organization?.uuid;
-  if (!orgId) throw new Error("org ID not found in bootstrap response");
-  await chrome.storage.local.set({ orgId });
-  return orgId;
-}
 
-async function fetchUsage() {
-  const orgId = await getOrgId();
-  const resp  = await fetch(USAGE_URL(orgId), {
-    credentials: "include",
-    headers: { Accept: "application/json" },
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId: tabs[0].id },
+    func: async (orgId) => {
+      if (!orgId) {
+        const r = await fetch("/api/bootstrap", { headers: { Accept: "application/json" } });
+        if (!r.ok) throw new Error(`bootstrap ${r.status}`);
+        const d = await r.json();
+        orgId = d?.account?.memberships?.[0]?.organization?.uuid;
+        if (!orgId) throw new Error("org ID not found");
+      }
+      const r = await fetch(`/api/organizations/${orgId}/usage`, { headers: { Accept: "application/json" } });
+      if (!r.ok) throw new Error(`usage ${r.status}`);
+      return { orgId, usage: await r.json() };
+    },
+    args: [cachedOrgId ?? null],
   });
-  if (!resp.ok) {
-    const err = new Error(`usage HTTP ${resp.status}`);
-    err.status = resp.status;
-    throw err;
-  }
-  return resp.json();
+
+  if (result.error) throw new Error(result.error.message);
+  return result.result; // { orgId, usage }
 }
 
-// ── Badge + icon update ───────────────────────────────────────────────────────
+// ── Badge + icon ──────────────────────────────────────────────────────────────
 
 async function applyData(data, cfg) {
   const winPct  = parseFloat(data.five_hour?.utilization ?? 0);
@@ -110,22 +104,16 @@ async function applyData(data, cfg) {
   });
 }
 
-async function applyError(text = "!") {
-  await chrome.action.setIcon({ imageData: drawError() });
+async function applyIdle(text, title) {
   await chrome.action.setBadgeText({ text });
-  await chrome.action.setBadgeBackgroundColor({ color: COLOR.red });
-}
-
-async function applyIdle() {
-  await chrome.action.setBadgeText({ text: "–" });
   await chrome.action.setBadgeBackgroundColor({ color: COLOR.gray });
-  await chrome.action.setTitle({ title: "Claude Usage — not logged in to claude.ai" });
+  await chrome.action.setTitle({ title });
 }
 
-// ── Refresh logic ─────────────────────────────────────────────────────────────
+// ── Refresh ───────────────────────────────────────────────────────────────────
 
 async function doRefresh() {
-  const stored = await chrome.storage.local.get(["config", "cache", "authError"]);
+  const stored = await chrome.storage.local.get(["config", "cache", "orgId"]);
   const cfg    = { warn_threshold: 75, critical_threshold: 90, ...stored.config };
   const cache  = stored.cache || {};
 
@@ -136,19 +124,30 @@ async function doRefresh() {
   }
 
   try {
-    const data = await fetchUsage();
-    await chrome.storage.local.set({ cache: { data, fetched_at: Date.now() }, authError: false });
-    await applyData(data, cfg);
+    const { orgId, usage } = await fetchViaTab(stored.orgId);
+    await chrome.storage.local.set({
+      orgId,
+      cache: { data: usage, fetched_at: Date.now() },
+      noTab: false,
+      authError: false,
+    });
+    await applyData(usage, cfg);
   } catch (err) {
-    const isAuth = err.status === 401 || err.status === 403;
-    if (isAuth) {
-      // Clear cached org ID — it may have changed after re-login
-      await chrome.storage.local.set({ authError: true, orgId: null });
-      await applyIdle();
-    } else if (cache.data) {
-      await applyData(cache.data, cfg);
+    if (err.code === "NO_TAB") {
+      await chrome.storage.local.set({ noTab: true });
+      if (cache.data) {
+        await applyData(cache.data, cfg);
+      } else {
+        await applyIdle("–", "Claude Usage — open claude.ai in a tab");
+      }
     } else {
-      await applyError("!");
+      // Auth or network error — clear cached org ID in case it changed
+      await chrome.storage.local.set({ orgId: null, authError: true });
+      if (cache.data) {
+        await applyData(cache.data, cfg);
+      } else {
+        await applyIdle("!", "Claude Usage — error fetching data");
+      }
     }
   }
 }
@@ -168,7 +167,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "refresh") {
-    chrome.storage.local.set({ cache: null, authError: false }).then(() => {
+    chrome.storage.local.set({ cache: null, authError: false, noTab: false }).then(() => {
       doRefresh().then(() => sendResponse({ ok: true }));
     });
     return true;
