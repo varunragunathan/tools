@@ -60,32 +60,48 @@ function drawError() {
 // are included automatically — service workers can't send them directly.
 
 async function fetchViaTab(cachedOrgId) {
-  const tabs = await chrome.tabs.query({ url: "https://claude.ai/*", status: "complete" });
+  const tabs = await chrome.tabs.query({ url: "https://claude.ai/*" });
   if (!tabs.length) {
     const err = new Error("No claude.ai tab open");
     err.code = "NO_TAB";
     throw err;
   }
 
-  const [result] = await chrome.scripting.executeScript({
-    target: { tabId: tabs[0].id },
-    func: async (orgId) => {
-      if (!orgId) {
-        const r = await fetch("/api/bootstrap", { headers: { Accept: "application/json" } });
-        if (!r.ok) throw new Error(`bootstrap ${r.status}`);
-        const d = await r.json();
-        orgId = d?.account?.memberships?.[0]?.organization?.uuid;
-        if (!orgId) throw new Error("org ID not found");
-      }
-      const r = await fetch(`/api/organizations/${orgId}/usage`, { headers: { Accept: "application/json" } });
-      if (!r.ok) throw new Error(`usage ${r.status}`);
-      return { orgId, usage: await r.json() };
-    },
-    args: [cachedOrgId ?? null],
-  });
+  const tabId = tabs[0].id;
 
-  if (result.error) throw new Error(result.error.message);
-  return result.result; // { orgId, usage }
+  // Inject content script if not already present (tabs that were open before
+  // the extension installed don't get content scripts automatically).
+  // The guard in content.js prevents duplicate listener registration.
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+  } catch (_) { /* already injected or tab not ready — proceed anyway */ }
+
+  // Send message to content.js running inside the claude.ai tab.
+  // Content scripts have full session cookie access; service workers don't.
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(
+      tabId,
+      { type: "fetchUsage", orgId: cachedOrgId ?? null },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          const err = new Error(chrome.runtime.lastError.message);
+          err.code = "NO_CONTENT_SCRIPT";
+          reject(err);
+          return;
+        }
+        if (!response?.ok) {
+          const msg = response?.debug
+            ? `${response.error} | bootstrap keys: ${JSON.stringify(response.debug.bootstrapKeys)}`
+            : (response?.error ?? "content script returned error");
+          const err = new Error(msg);
+          err.authFail = response?.authFail ?? false;
+          reject(err);
+          return;
+        }
+        resolve({ orgId: response.orgId, usage: response.usage });
+      },
+    );
+  });
 }
 
 // ── Badge + icon ──────────────────────────────────────────────────────────────
@@ -130,23 +146,23 @@ async function doRefresh() {
       cache: { data: usage, fetched_at: Date.now() },
       noTab: false,
       authError: false,
+      lastError: null,
     });
     await applyData(usage, cfg);
   } catch (err) {
-    if (err.code === "NO_TAB") {
-      await chrome.storage.local.set({ noTab: true });
+    if (err.code === "NO_TAB" || err.code === "NO_CONTENT_SCRIPT") {
+      await chrome.storage.local.set({ noTab: true, lastError: err.message });
       if (cache.data) {
         await applyData(cache.data, cfg);
       } else {
         await applyIdle("–", "Claude Usage — open claude.ai in a tab");
       }
     } else {
-      // Auth or network error — clear cached org ID in case it changed
-      await chrome.storage.local.set({ orgId: null, authError: true });
+      await chrome.storage.local.set({ orgId: null, authError: true, lastError: err.message });
       if (cache.data) {
         await applyData(cache.data, cfg);
       } else {
-        await applyIdle("!", "Claude Usage — error fetching data");
+        await applyIdle("!", `Claude Usage — ${err.message}`);
       }
     }
   }

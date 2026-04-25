@@ -42,24 +42,19 @@ async function render() {
   const content   = document.getElementById("content");
   const updatedAt = document.getElementById("updated-at");
 
-  const stored = await chrome.storage.local.get(["config", "cache", "authError", "noTab"]);
+  const stored = await chrome.storage.local.get(["config", "cache", "authError", "noTab", "lastError"]);
   const cfg    = { warn_threshold: 75, critical_threshold: 90, ...stored.config };
 
-  if (stored.noTab && !stored.cache?.data) {
+  if ((stored.noTab || stored.authError) && !stored.cache?.data) {
+    const title = stored.noTab ? "No claude.ai tab open" : "Could not fetch usage";
+    const hint  = stored.noTab
+      ? "Open claude.ai in a tab, then click ↻."
+      : "Make sure you're logged in to claude.ai, then click ↻.";
     content.innerHTML = `
       <div class="no-token">
-        <strong>No claude.ai tab open</strong>
-        Open claude.ai in a tab, then click Refresh.
-      </div>`;
-    updatedAt.textContent = "";
-    return;
-  }
-
-  if (stored.authError && !stored.cache?.data) {
-    content.innerHTML = `
-      <div class="no-token">
-        <strong>Not logged in</strong>
-        Log in to claude.ai, then click Refresh.
+        <strong>${title}</strong>
+        ${hint}
+        ${stored.lastError ? `<span class="debug-err">${stored.lastError}</span>` : ""}
       </div>`;
     updatedAt.textContent = "";
     return;

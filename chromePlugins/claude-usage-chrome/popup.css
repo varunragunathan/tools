@@ -80,6 +80,14 @@ main { padding: 12px; }
   line-height: 1.6;
 }
 .no-token strong { display: block; color: #EBEBF5; margin-bottom: 4px; font-size: 14px; }
+.debug-err {
+  display: block;
+  margin-top: 8px;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  color: #FF3B30;
+  word-break: break-all;
+}
 
 .error-msg { color: #FF3B30; font-size: 12px; padding: 12px 0; line-height: 1.5; }
 
