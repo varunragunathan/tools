@@ -141,7 +141,7 @@ el   = elapsed(s)
 
 if mode == "stopwatch":
     color = GREEN if s["running"] else GRAY
-    print(f"⏱ {fmt(el)} | color={color}")
+    print(f"{fmt(el)} | color={color}")
     print("---")
     if s["running"]:
         print(f"Pause  | {run('--pause')} color={ORANGE}")
@@ -176,7 +176,7 @@ else:  # timer
     else:
         color = GRAY
 
-    print(f"⏳ {fmt(remaining)} | color={color}")
+    print(f"{fmt(remaining)} | color={color}")
     print("---")
 
     if done:

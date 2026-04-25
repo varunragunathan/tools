@@ -90,13 +90,18 @@ async function fetchViaTab(cachedOrgId) {
           return;
         }
         if (!response?.ok) {
-          const msg = response?.debug
-            ? `${response.error} | bootstrap keys: ${JSON.stringify(response.debug.bootstrapKeys)}`
+          const d = response?.debug;
+          const msg = d
+            ? `${response.error} | boot:${JSON.stringify(d.bootstrapKeys)} acct:${JSON.stringify(d.accountKeys)} org:${d.orgId} acct:${d.acctId} tried:${JSON.stringify(d.tried)}`
             : (response?.error ?? "content script returned error");
           const err = new Error(msg);
           err.authFail = response?.authFail ?? false;
           reject(err);
           return;
+        }
+        // Cache the OAuth token if the content script found one in localStorage
+        if (response.oauthToken) {
+          chrome.storage.local.set({ oauthToken: response.oauthToken });
         }
         resolve({ orgId: response.orgId, usage: response.usage });
       },
