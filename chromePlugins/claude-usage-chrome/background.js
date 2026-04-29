@@ -73,7 +73,8 @@ async function fetchViaTab(cachedOrgId) {
   // the extension installed don't get content scripts automatically).
   // The guard in content.js prevents duplicate listener registration.
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["inject.js"], world: "MAIN" });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"], world: "ISOLATED" });
   } catch (_) { /* already injected or tab not ready — proceed anyway */ }
 
   // Send message to content.js running inside the claude.ai tab.
