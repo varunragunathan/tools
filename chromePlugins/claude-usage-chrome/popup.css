@@ -33,6 +33,18 @@ header {
 #refresh-btn.spinning { animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.stale-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #3A2E00;
+  border-bottom: 1px solid #5C4400;
+  font-size: 11px;
+  color: #FFD60A;
+}
+.stale-notice::before { content: "⚠"; font-size: 12px; }
+
 main { padding: 12px; }
 
 .section       { margin-bottom: 12px; }

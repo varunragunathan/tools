@@ -39,8 +39,9 @@ function sectionHTML(title, pct, resetsAt, cfg) {
 }
 
 async function render() {
-  const content   = document.getElementById("content");
-  const updatedAt = document.getElementById("updated-at");
+  const content      = document.getElementById("content");
+  const updatedAt    = document.getElementById("updated-at");
+  const staleNotice  = document.getElementById("stale-notice");
 
   const stored = await chrome.storage.local.get(["config", "cache", "authError", "noTab", "lastError"]);
   const cfg    = { warn_threshold: 75, critical_threshold: 90, ...stored.config };
@@ -57,6 +58,7 @@ async function render() {
         ${stored.lastError ? `<span class="debug-err">${stored.lastError}</span>` : ""}
       </div>`;
     updatedAt.textContent = "";
+    staleNotice.hidden = true;
     return;
   }
 
@@ -90,6 +92,14 @@ async function render() {
   if (ageSecs < 60)   updatedAt.textContent = `Updated ${ageSecs}s ago`;
   else if (ageSecs < 3600) updatedAt.textContent = `Updated ${Math.floor(ageSecs / 60)}m ago`;
   else                updatedAt.textContent = `Updated ${Math.floor(ageSecs / 3600)}h ago`;
+
+  if (ageSecs >= 300) {
+    const ageMin = Math.floor(ageSecs / 60);
+    staleNotice.textContent = `Data is ${ageMin}m old — click ↻ to refresh`;
+    staleNotice.hidden = false;
+  } else {
+    staleNotice.hidden = true;
+  }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {

@@ -26,6 +26,7 @@ CACHE_PATH  = os.path.join(CONFIG_DIR, "cache.json")
 # Minimum seconds between real API calls regardless of SwiftBar's refresh rate.
 # The usage endpoint rate-limits aggressively; 60s is a safe floor.
 MIN_FETCH_INTERVAL = 60
+STALE_THRESHOLD = 300  # seconds before showing a stale warning
 
 DEFAULTS = {
     "warn_threshold": 75,          # % → orange
@@ -157,12 +158,13 @@ def render(data, cfg, stale=False, fetched_at=0):
     week_color = color_for(week_pct, cfg)
     title_color = win_color if win_pct >= week_pct else week_color
 
-    stale_mark = " ·" if stale else ""
+    stale_mark = " ⚠" if stale else ""
+    stale_color = f" color=#FFD60A" if stale else f" color={title_color}"
     if cfg.get("show_time_in_preview") and (t := time_until(win_reset)):
         preview_right = t
     else:
         preview_right = f"W {week_pct:.0f}%"
-    print(f"◈  {win_pct:.0f}%  ·  {preview_right}{stale_mark} | color={title_color}")
+    print(f"◈  {win_pct:.0f}%  ·  {preview_right}{stale_mark} |{stale_color}")
     print("---")
 
     # 5-Hour window
@@ -191,7 +193,7 @@ def render(data, cfg, stale=False, fetched_at=0):
     # Footer
     print("---")
     if stale and fetched_at:
-        print(f"Data from {age_str(fetched_at)} (rate limited) | color={GRAY} size=10")
+        print(f"⚠ Data is {age_str(fetched_at)} old | color=#FFD60A size=10")
     else:
         now = datetime.now().strftime("%-I:%M %p")
         print(f"Updated {now} | color={GRAY} size=10")
@@ -220,7 +222,7 @@ def main():
     # Respect the minimum fetch interval — serve cache if too soon
     age = time.time() - fetched_at
     if cached_data and age < MIN_FETCH_INTERVAL:
-        render(cached_data, cfg, stale=False, fetched_at=fetched_at)
+        render(cached_data, cfg, stale=age >= STALE_THRESHOLD, fetched_at=fetched_at)
         return
 
     token, err = get_access_token()
